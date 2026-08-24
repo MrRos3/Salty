@@ -15,5 +15,3 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/MrRos3/Salty/main/Sal
 - `loader.lua` - tiny bootstrap loader
 - `VERSION` - current version
 - `THIRD_PARTY_NOTICES.md` - third-party license notices
-
-Lucide icon data used by Salty is hosted in the maintainer's `MrRos3/Icons` repository.
