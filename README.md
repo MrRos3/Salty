@@ -4,11 +4,7 @@ Salty is a Roblox runtime remote/network inspection tool maintained by **MrRos3*
 
 ## Execute
 
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/MrRos3/Salty/main/Salty.luau"))()
-```
-
-## Stable loader
+Use the loader so Salty includes the compatibility hooks:
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/MrRos3/Salty/main/loader.lua"))()
@@ -17,7 +13,8 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/MrRos3/Salty/main/loa
 ## Project files
 
 - `Salty.luau` — complete bundled Salty runtime.
-- `loader.lua` — tiny stable loader that always fetches the current `Salty.luau` from this repository.
+- `compat.lua` — fallback Incoming/Outgoing hook layer for executors where the bundled hook path stays silent.
+- `loader.lua` — stable entry point that loads both the bundled runtime and compatibility layer.
 - `VERSION` — current Salty repository version marker.
 
 Lucide icon data used by Salty is hosted in the maintainer's `MrRos3/Icons` repository.
