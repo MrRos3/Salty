@@ -1,5 +1,7 @@
 local BASE = "https://raw.githubusercontent.com/MrRos3/Salty/main/"
 local CORE_URL = BASE .. "SaltyCore.luau"
+local ICON_URL = "https://raw.githubusercontent.com/MrRos3/Icons/main/icons/Icons.lua"
+local OLD_ICON_FOLDER = string.char(108, 117, 99, 105, 100, 101)
 local INTERNAL = string.char(67, 111, 98, 97, 108, 116)
 local UPPER = INTERNAL:upper()
 local LOWER = INTERNAL:lower()
@@ -7,6 +9,11 @@ local LOWER = INTERNAL:lower()
 getgenv()[UPPER .. "_LATEST_URL"] = BASE .. "Salty.luau"
 
 local source = game:HttpGet(CORE_URL)
+source = source:gsub(
+    "https://raw.githubusercontent.com/MrRos3/Icons/main/" .. OLD_ICON_FOLDER .. "/dist/Icons.lua",
+    ICON_URL
+)
+
 source = source
     :gsub("SALTY", UPPER)
     :gsub("Salty", INTERNAL)
