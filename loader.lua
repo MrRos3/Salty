@@ -1,6 +1,5 @@
 local BASE = "https://raw.githubusercontent.com/MrRos3/Salty/main/"
 local MAIN_URL = BASE .. "Salty.luau"
-local COMPAT_URL = BASE .. "compat.lua"
 local DIAGNOSTICS_URL = BASE .. "diagnostics.lua"
 local LOADER_URL = BASE .. "loader.lua"
 
@@ -18,15 +17,11 @@ getgenv().SaltyInitialized = false
 -- Teleports reload the complete Salty stack.
 getgenv().SALTY_LATEST_URL = LOADER_URL
 
+-- Load the bundled Salty runtime only. No extra remote wrappers are installed here,
+-- so RemoteFunction return values remain exactly as the game returned them.
 local result = loadstring(game:HttpGet(MAIN_URL))()
 
-local compatOK, compatErr = pcall(function()
-    loadstring(game:HttpGet(COMPAT_URL))()
-end)
-if not compatOK then
-    warn("Salty: compatibility layer failed to load: " .. tostring(compatErr))
-end
-
+-- Diagnostics only observe Salty's own log state and executor support.
 local diagOK, diagErr = pcall(function()
     loadstring(game:HttpGet(DIAGNOSTICS_URL))()
 end)
