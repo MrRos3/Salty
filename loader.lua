@@ -3,7 +3,16 @@ local MAIN_URL = BASE .. "Salty.luau"
 local COMPAT_URL = BASE .. "compat.lua"
 local LOADER_URL = BASE .. "loader.lua"
 
--- Teleports should reload the complete Salty stack, not only the bundled core.
+-- Remove an older/stale Salty instance before installing the current build.
+local oldSalty = getgenv().Salty
+if oldSalty and oldSalty.shared and typeof(oldSalty.shared.Unload) == "function" then
+    pcall(oldSalty.shared.Unload)
+end
+
+getgenv().SaltyCompatInstalled = nil
+getgenv().SaltyInitialized = false
+
+-- Teleports reload the complete Salty stack, including compatibility hooks.
 getgenv().SALTY_LATEST_URL = LOADER_URL
 
 local result = loadstring(game:HttpGet(MAIN_URL))()
