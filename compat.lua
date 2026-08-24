@@ -1,5 +1,5 @@
--- Salty safe compatibility spy
--- Replaces only the fragile transport hooks while preserving Salty's UI/log objects.
+-- Salty safe compatibility spy v2
+-- Captures remotes and bypasses the old Cobalt Log:Call black hole when needed.
 
 if getgenv().SaltySafeCompatInstalled then
     return
@@ -13,13 +13,6 @@ end
 
 local shared = Runtime.shared
 getgenv().SaltySafeCompatInstalled = true
-
-local function safeCall(fn, ...)
-    if typeof(fn) ~= "function" then
-        return false, nil
-    end
-    return pcall(fn, ...)
-end
 
 local function safeCallingScript()
     if typeof(getcallingscript) ~= "function" then
@@ -46,12 +39,12 @@ local function shouldIgnore(instance, origin)
 end
 
 local function ensureLog(instance, kind, method, origin)
-    local logs = shared.Logs and shared.Logs[kind]
-    if not logs then
+    local group = shared.Logs and shared.Logs[kind]
+    if not group then
         return nil
     end
 
-    local log = logs[instance]
+    local log = group[instance]
     if not log and shared.NewLog then
         local ok, created = pcall(shared.NewLog, instance, kind, method, origin)
         if ok then
@@ -59,6 +52,34 @@ local function ensureLog(instance, kind, method, origin)
         end
     end
     return log
+end
+
+local function callCount(kind, instance)
+    local group = shared.Logs and shared.Logs[kind]
+    local log = group and group[instance]
+    return log and log.Calls and #log.Calls or 0
+end
+
+local function directAppend(log, info)
+    log.Calls = log.Calls or {}
+    log.GameCalls = log.GameCalls or {}
+
+    info.CreationTime = info.CreationTime or tick()
+
+    local index = #log.Calls + 1
+    log.Calls[index] = info
+
+    if not info.IsExecutor then
+        table.insert(log.GameCalls, index)
+    end
+
+    if shared.Communicator then
+        pcall(function()
+            shared.Communicator:Fire(log.Instance, log.Type, index)
+        end)
+    end
+
+    return true
 end
 
 local function addCall(instance, kind, method, args, origin, isExecutor)
@@ -78,33 +99,36 @@ local function addCall(instance, kind, method, args, origin, isExecutor)
         Line = nil,
         Source = "[Salty Safe Compat]",
         IsExecutor = isExecutor == true,
+        CreationTime = tick(),
     }
 
     if log.Blocked then
-        local saveManager = shared.SaveManager
         local shouldLogBlocked = false
-        if saveManager and saveManager.GetState then
-            local ok, state = pcall(saveManager.GetState, saveManager, "LogBlockedRemotes", false)
+        if shared.SaveManager and shared.SaveManager.GetState then
+            local ok, state = pcall(shared.SaveManager.GetState, shared.SaveManager, "LogBlockedRemotes", false)
             shouldLogBlocked = ok and state == true
         end
+
         if shouldLogBlocked then
             info.Blocked = true
-            pcall(log.Call, log, info)
+        else
+            return true
         end
-        return true
     end
 
-    return pcall(log.Call, log, info)
+    local before = #log.Calls
+    if typeof(log.Call) == "function" then
+        pcall(log.Call, log, info)
+    end
+
+    if #log.Calls <= before then
+        return directAppend(log, info)
+    end
+
+    return true
 end
 
-local function callCount(kind, instance)
-    local group = shared.Logs and shared.Logs[kind]
-    local log = group and group[instance]
-    return log and log.Calls and #log.Calls or 0
-end
-
--- Restore Cobalt/Salty's prototype hooks for network methods so our single
--- namecall transport is not stacked on top of several function hooks.
+-- Restore the original Cobalt/Salty prototype hooks before installing ours.
 if shared.Hooks then
     local restoreNames = {
         FireServer = true,
@@ -113,9 +137,9 @@ if shared.Hooks then
         invokeServer = true,
     }
 
-    local toRemove = {}
+    local remove = {}
     for hooked, original in pairs(shared.Hooks) do
-        local name = nil
+        local name
         pcall(function()
             name = debug.info(hooked, "n")
         end)
@@ -128,19 +152,15 @@ if shared.Hooks then
             if not restored and typeof(hookfunction) == "function" and typeof(original) == "function" then
                 pcall(hookfunction, hooked, original)
             end
-            table.insert(toRemove, hooked)
+            table.insert(remove, hooked)
         end
     end
 
-    for _, hooked in ipairs(toRemove) do
+    for _, hooked in ipairs(remove) do
         shared.Hooks[hooked] = nil
     end
 end
 
--- OUTGOING
--- Bypass the old Cobalt namecall wrapper completely when its original function
--- reference is available. This avoids executor-specific metadata code from
--- preventing the actual network call or logger from running.
 local outgoingClasses = {
     RemoteEvent = true,
     RemoteFunction = true,
@@ -154,15 +174,17 @@ local outgoingMethods = {
     invokeServer = true,
 }
 
-local baseNamecall = typeof(shared.NamecallHook) == "function" and shared.NamecallHook or nil
-local installedNamecall = false
 local wrapClosure = typeof(newcclosure) == "function" and newcclosure or function(fn)
     return fn
 end
 
+-- Core Salty stores the original __namecall function here after installing its hook.
+local baseNamecall = typeof(shared.NamecallHook) == "function" and shared.NamecallHook or nil
+local installedNamecall = false
+
 local safeNamecall
 safeNamecall = wrapClosure(function(self, ...)
-    local method = nil
+    local method
     if typeof(getnamecallmethod) == "function" then
         local ok, value = pcall(getnamecallmethod)
         if ok then
@@ -171,26 +193,25 @@ safeNamecall = wrapClosure(function(self, ...)
     end
 
     local isRemote = typeof(self) == "Instance" and outgoingClasses[self.ClassName] and outgoingMethods[method]
-    if not isRemote then
+    if not isRemote or typeof(baseNamecall) ~= "function" then
         return baseNamecall(self, ...)
     end
 
     local origin = safeCallingScript()
     local args = table.pack(...)
-    local isExecutor = safeCheckCaller()
+    local executorCall = safeCheckCaller()
     local before = callCount("Outgoing", self)
 
     local log = ensureLog(self, "Outgoing", method, origin)
     if log and log.Blocked then
-        addCall(self, "Outgoing", method, args, origin, isExecutor)
+        addCall(self, "Outgoing", method, args, origin, executorCall)
         return nil
     end
 
     local result = table.pack(baseNamecall(self, ...))
 
-    -- If the original Salty path did not log synchronously, write the fallback.
     if callCount("Outgoing", self) <= before then
-        addCall(self, "Outgoing", method, args, origin, isExecutor)
+        addCall(self, "Outgoing", method, args, origin, executorCall)
     end
 
     return table.unpack(result, 1, result.n)
@@ -201,8 +222,9 @@ if typeof(hookmetamethod) == "function" then
     local ok = pcall(function()
         previous = hookmetamethod(game, "__namecall", safeNamecall)
     end)
+
     if ok then
-        if not baseNamecall and typeof(previous) == "function" then
+        if typeof(baseNamecall) ~= "function" and typeof(previous) == "function" then
             baseNamecall = previous
         end
         installedNamecall = typeof(baseNamecall) == "function"
@@ -212,9 +234,10 @@ end
 if not installedNamecall and typeof(getrawmetatable) == "function" and typeof(setreadonly) == "function" then
     pcall(function()
         local mt = getrawmetatable(game)
-        if not baseNamecall then
+        if typeof(baseNamecall) ~= "function" then
             baseNamecall = rawget(mt, "__namecall")
         end
+
         if typeof(baseNamecall) == "function" then
             setreadonly(mt, false)
             rawset(mt, "__namecall", safeNamecall)
@@ -224,11 +247,56 @@ if not installedNamecall and typeof(getrawmetatable) == "function" and typeof(se
     end)
 end
 
--- INCOMING
--- Direct RemoteEvent observation requires none of Cobalt's getconnections,
--- getscriptfromthread, isexecutorclosure, or callback-detour machinery.
+-- Also hook direct method calls such as RemoteEvent.FireServer(remote, ...).
+local function installPrototypeHook(className, method)
+    if typeof(hookfunction) ~= "function" then
+        return false
+    end
+
+    local ok = pcall(function()
+        local temp = Instance.new(className)
+        local target = temp[method]
+        temp:Destroy()
+
+        local original
+        original = hookfunction(target, wrapClosure(function(self, ...)
+            if typeof(self) ~= "Instance" or self.ClassName ~= className then
+                return original(self, ...)
+            end
+
+            local origin = safeCallingScript()
+            local args = table.pack(...)
+            local executorCall = safeCheckCaller()
+            local before = callCount("Outgoing", self)
+
+            local log = ensureLog(self, "Outgoing", method, origin)
+            if log and log.Blocked then
+                addCall(self, "Outgoing", method, args, origin, executorCall)
+                return nil
+            end
+
+            local result = table.pack(original(self, ...))
+
+            if callCount("Outgoing", self) <= before then
+                addCall(self, "Outgoing", method, args, origin, executorCall)
+            end
+
+            return table.unpack(result, 1, result.n)
+        end))
+    end)
+
+    return ok
+end
+
+local prototypeHooks = 0
+if installPrototypeHook("RemoteEvent", "FireServer") then prototypeHooks += 1 end
+if installPrototypeHook("RemoteFunction", "InvokeServer") then prototypeHooks += 1 end
+if installPrototypeHook("UnreliableRemoteEvent", "FireServer") then prototypeHooks += 1 end
+
+-- Incoming RemoteEvent observation.
 local attached = setmetatable({}, { __mode = "k" })
 local incomingSeen = setmetatable({}, { __mode = "k" })
+local attachedCount = 0
 
 local function attachIncoming(instance)
     if attached[instance] or typeof(instance) ~= "Instance" then
@@ -249,14 +317,11 @@ local function attachIncoming(instance)
             return
         end
 
-        local args = table.pack(...)
         local previous = incomingSeen[instance] or 0
         local current = callCount("Incoming", instance)
 
-        -- The original logger's connection was registered before this one. If it
-        -- already recorded the event, do not duplicate it.
         if current <= previous then
-            addCall(instance, "Incoming", "OnClientEvent", args, nil, false)
+            addCall(instance, "Incoming", "OnClientEvent", table.pack(...), nil, false)
             current = callCount("Incoming", instance)
         end
 
@@ -271,8 +336,11 @@ local function attachIncoming(instance)
         return instance.OnClientEvent:Connect(callback)
     end)
 
-    if ok and connection and shared.Connect then
-        pcall(shared.Connect, connection)
+    if ok and connection then
+        attachedCount += 1
+        if shared.Connect then
+            pcall(shared.Connect, connection)
+        end
     end
 end
 
@@ -285,27 +353,24 @@ if shared.Connect then
     pcall(shared.Connect, descendantConnection)
 end
 
--- Actor/parallel Luau notice. Main-VM hooks cannot see outgoing calls executed
--- inside isolated Actor VMs unless the executor exposes actor APIs.
 local actorCount = 0
 pcall(function()
     actorCount = #game:QueryDescendants("Actor")
 end)
 
-if shared.Sonner then
-    if installedNamecall then
-        pcall(shared.Sonner.success, "Salty safe remote hooks active")
-    else
-        pcall(shared.Sonner.warning or shared.Sonner.info, "Salty: outgoing hook API unavailable on this executor")
-    end
-
-    if actorCount > 0 and not shared.ActorsEnabled then
-        pcall(shared.Sonner.warning or shared.Sonner.info, "Salty: Actor VMs detected; outgoing Actor traffic needs executor actor support")
-    end
-end
-
 getgenv().SaltySafeCompat = {
     OutgoingHook = installedNamecall,
+    PrototypeHooks = prototypeHooks,
+    IncomingConnections = attachedCount,
     ActorCount = actorCount,
     ActorsEnabled = shared.ActorsEnabled == true,
 }
+
+if shared.Sonner then
+    pcall(shared.Sonner.success, string.format(
+        "Salty hooks ready — incoming:%d outgoing:%s/%d",
+        attachedCount,
+        installedNamecall and "yes" or "no",
+        prototypeHooks
+    ))
+end
