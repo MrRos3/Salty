@@ -5571,7 +5571,7 @@ type Icon = {
 
 
 
-local LucideIconsUrl = "https://raw.githubusercontent.com/MrRos3/Icons/main/lucide/dist/Icons.lua"
+local LucideIconsUrl = "https://raw.githubusercontent.com/MrRos3/Icons/main/icons/Icons.lua"
 
 
 
