@@ -1,16 +1,3 @@
---[[
-    Salty
-    Runtime developer tool for monitoring and inspecting Roblox network traffic.
-
-    Project: Salty
-    Maintainer: MrRos3
-    GitHub: https://github.com/MrRos3/Salty
---]]
-
-
--- ++++++++ WAX BUNDLED DATA BELOW ++++++++ --
-
--- Will be used later for getting flattened globals
 local ImportGlobals
 
 -- Holds direct closure data (defining this before the DOM tree for line debugging etc)
